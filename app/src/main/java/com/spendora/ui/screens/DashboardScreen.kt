@@ -87,6 +87,7 @@ fun DashboardScreen(
     viewModel: MainViewModel,
     userName: String,
     resumeTick: Int,
+    openAddInitially: Boolean = false,
     onNavigate: (AppDestination) -> Unit
 ) {
     val context = LocalContext.current
@@ -97,7 +98,7 @@ fun DashboardScreen(
     val filters by viewModel.filters.collectAsState()
     val selection by viewModel.selection.collectAsState()
 
-    var showAdd by remember { mutableStateOf(false) }
+    var showAdd by rememberSaveable { mutableStateOf(openAddInitially) }
     var editing by remember { mutableStateOf<Expense?>(null) }
     var deleting by remember { mutableStateOf<Expense?>(null) }
     var showExport by remember { mutableStateOf(false) }

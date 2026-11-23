@@ -33,17 +33,23 @@ class MainActivity : ComponentActivity() {
 
     /** Bumped on every resume so permission statuses on screen are re-read live. */
     private var resumeTick by mutableIntStateOf(0)
+    private var openAddOnLaunch = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        openAddOnLaunch = intent?.getBooleanExtra(EXTRA_OPEN_ADD_EXPENSE, false) == true
         setContent {
             SpendoraTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AppRoot(viewModel = viewModel, resumeTick = resumeTick)
+                    AppRoot(
+                        viewModel = viewModel,
+                        resumeTick = resumeTick,
+                        openAddOnLaunch = openAddOnLaunch
+                    )
                 }
             }
         }
@@ -54,10 +60,14 @@ class MainActivity : ComponentActivity() {
         resumeTick++
         viewModel.onAppResumed()
     }
+
+    companion object {
+        const val EXTRA_OPEN_ADD_EXPENSE = "com.spendora.EXTRA_OPEN_ADD_EXPENSE"
+    }
 }
 
 @Composable
-private fun AppRoot(viewModel: MainViewModel, resumeTick: Int) {
+private fun AppRoot(viewModel: MainViewModel, resumeTick: Int, openAddOnLaunch: Boolean) {
     val userName by viewModel.userName.collectAsState()
     val dashboard by viewModel.dashboard.collectAsState()
     val allExpenses by viewModel.allExpenses.collectAsState()
@@ -83,6 +93,7 @@ private fun AppRoot(viewModel: MainViewModel, resumeTick: Int) {
                     viewModel = viewModel,
                     userName = name,
                     resumeTick = resumeTick,
+                    openAddInitially = openAddOnLaunch,
                     onNavigate = { destination = it }
                 )
 

@@ -30,6 +30,7 @@ class SpendoraTileService : TileService() {
         super.onClick()
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(MainActivity.EXTRA_OPEN_ADD_EXPENSE, true)
         }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {

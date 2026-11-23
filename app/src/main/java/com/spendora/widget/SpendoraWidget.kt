@@ -1,6 +1,7 @@
 package com.spendora.widget
 
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -8,7 +9,7 @@ import androidx.glance.Button
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
-import androidx.glance.action.actionStartActivity
+import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
@@ -70,8 +71,13 @@ class SpendoraWidget : GlanceAppWidget() {
                     )
                     Spacer(modifier = GlanceModifier.height(12.dp))
                     Button(
-                        text = "Open Spendora",
-                        onClick = actionStartActivity<MainActivity>(),
+                        text = "Add expense",
+                        onClick = actionStartActivity(
+                            Intent(context, MainActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                putExtra(MainActivity.EXTRA_OPEN_ADD_EXPENSE, true)
+                            }
+                        ),
                         modifier = GlanceModifier.fillMaxWidth(),
                     )
                 }
