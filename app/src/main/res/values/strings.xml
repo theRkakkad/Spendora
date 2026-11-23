@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Expense Tracker</string>
+    <string name="channel_pending_name">Pending expenses</string>
+    <string name="channel_pending_description">Reminders to add details for detected payments</string>
+</resources>
