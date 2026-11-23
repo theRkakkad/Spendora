@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.spendora.app"
+    namespace = "com.spendora"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.spendora.app"
+        applicationId = "com.spendora"
         minSdk = 29
         targetSdk = 34
         versionCode = 3

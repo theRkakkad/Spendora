@@ -20,7 +20,7 @@ Spendora is a private, on-device expense tracker for everyday rupee spending. Re
 
 It is built around one idea: **your spending history should belong to you**. There is no account, no server, no analytics, and no `INTERNET` permission in the app manifest. SMS processing, storage, reminders, and export all happen on the phone.
 
-> Current version: **1.2** · Package identity: **`com.spendora.app`**
+> Current version: **1.2** · Package identity: **`com.spendora`**
 
 ---
 
@@ -146,7 +146,7 @@ Set `JAVA_HOME` and `ANDROID_HOME` before running Gradle. This repository contai
 
 ## Upgrade and data note
 
-Spendora now uses the application id **`com.spendora.app`**.
+Spendora now uses the application id **`com.spendora`**.
 
 Android treats a changed application id as a different app. If you installed an older build using `com.expensetracker.app` or `com.pranav.spendwisely`, its records stay with that old installation. Before uninstalling anything:
 
