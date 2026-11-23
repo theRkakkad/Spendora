@@ -2,8 +2,15 @@ package com.spendora.ui.screens
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +20,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -31,6 +40,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.spendora.data.Account
+import com.spendora.data.ExpenseCategory
 import com.spendora.util.Format
 import java.util.Calendar
 
@@ -44,8 +55,19 @@ fun ExpenseEditorDialog(
     initialLabel: String,
     initialTimestamp: Long,
     suggestions: List<String>,
+    initialCategory: String = ExpenseCategory.OTHER.id,
+    initialAccountId: Long = 1L,
+    initialReceiptUri: String? = null,
+    accounts: List<Account> = emptyList(),
     onDismiss: () -> Unit,
-    onSave: (amount: Double, label: String, timestamp: Long) -> Unit
+    onSave: (
+        amount: Double,
+        label: String,
+        timestamp: Long,
+        category: String,
+        accountId: Long,
+        receiptUri: String?
+    ) -> Unit
 ) {
     val context = LocalContext.current
     var amountText by remember {
@@ -53,10 +75,31 @@ fun ExpenseEditorDialog(
     }
     var label by remember { mutableStateOf(initialLabel) }
     var timestamp by remember { mutableLongStateOf(initialTimestamp) }
+    var category by remember { mutableStateOf(initialCategory) }
+    var accountId by remember { mutableLongStateOf(initialAccountId) }
+    var receiptUri by remember { mutableStateOf(initialReceiptUri) }
     var showErrors by remember { mutableStateOf(false) }
+    var accountMenuOpen by remember { mutableStateOf(false) }
+
+    val receiptLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            receiptUri = uri.toString()
+        }
+    }
 
     val amount = Format.parseAmount(amountText)
     val labelValid = label.isNotBlank()
+    val selectedAccount = accounts.firstOrNull { it.id == accountId }
+        ?: accounts.firstOrNull()
+        ?: Account(id = 1L, name = "Cash", type = "CASH", color = 0xFF4CAF50)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -108,6 +151,62 @@ fun ExpenseEditorDialog(
                         }
                     }
                 }
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "Category",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                CategoryPicker(selected = category, onSelect = { category = it })
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Account",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Box {
+                    OutlinedButton(onClick = { accountMenuOpen = true }) {
+                        Text(selectedAccount.name)
+                    }
+                    DropdownMenu(
+                        expanded = accountMenuOpen,
+                        onDismissRequest = { accountMenuOpen = false }
+                    ) {
+                        accounts.forEach { account ->
+                            DropdownMenuItem(
+                                text = { Text(account.name) },
+                                onClick = {
+                                    accountId = account.id
+                                    accountMenuOpen = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Receipt",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { receiptLauncher.launch("image/*") }) {
+                        Text(if (receiptUri == null) "Attach receipt" else "Replace receipt")
+                    }
+                    if (receiptUri != null) {
+                        OutlinedButton(onClick = {
+                            runCatching { openReceipt(context, receiptUri!!) }
+                                .onFailure {
+                                    Toast.makeText(context, "Cannot open receipt", Toast.LENGTH_SHORT).show()
+                                }
+                        }) { Text("View") }
+                        TextButton(onClick = { receiptUri = null }) { Text("Remove") }
+                    }
+                }
+
                 Spacer(Modifier.height(12.dp))
                 Text(
                     text = "Date and time",
@@ -165,7 +264,7 @@ fun ExpenseEditorDialog(
             TextButton(
                 onClick = {
                     if (amount != null && labelValid) {
-                        onSave(amount, label.trim(), timestamp)
+                        onSave(amount, label.trim(), timestamp, category, accountId, receiptUri)
                     } else {
                         showErrors = true
                     }
@@ -176,6 +275,15 @@ fun ExpenseEditorDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+private fun openReceipt(context: Context, uriString: String) {
+    val uri = Uri.parse(uriString)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "image/*")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(intent)
 }
 
 @Composable

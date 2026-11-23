@@ -6,6 +6,9 @@ import com.spendora.data.AppDatabase
 import com.spendora.data.ExpenseRepository
 import com.spendora.data.SettingsStore
 import com.spendora.notify.NotificationHelper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Application class. Acts as a tiny service locator so receivers, workers,
@@ -20,6 +23,9 @@ class SpendoraApp : Application() {
     override fun onCreate() {
         super.onCreate()
         NotificationHelper.createChannel(this)
+        CoroutineScope(Dispatchers.IO).launch {
+            repository.seedDefaults()
+        }
     }
 }
 

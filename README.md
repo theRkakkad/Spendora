@@ -219,45 +219,37 @@ A real bank SMS should still be tested on a physical device because bank message
 
 ---
 
-## Proposed roadmap
+## Shipped in 2.0
 
-These are ideas, not shipped features. They are ordered roughly by usefulness and implementation cost.
+| Feature | Where to find it |
+| --- | --- |
+| **Category picker with icons and colours** | Add/edit expense dialog. Food, Travel, Bills, Shopping, Health, Fun, and Other. |
+| **Monthly budget with progress ring** | Wallet icon on the dashboard. Shows remaining amount and an over-limit warning. |
+| **Search and filter chips** | Dashboard. Filter by month, category, source, status, and amount range. |
+| **SMS rule tester** | Settings → Test an SMS rule. Paste a message and see the parse decision and reason. |
+| **Better CSV export** | Dashboard → Export CSV. Choose columns, date range, total row, and Excel BOM. |
+| **Bulk select, edit, and delete** | Checkboxes on expense rows. Set category/account or delete the selected entries in one action. |
+| **Encrypted local backup and restore** | Backup icon on the dashboard. Passphrase-based AES-GCM export for device migration. |
+| **Recurring expense detection** | Insights screen. Groups repeat saved payments and estimates their cadence. |
+| **Home-screen widget and quick tile** | Add the Spendora widget or quick tile to see today's total and open the app. |
+| **Spending insights** | Chart icon on the dashboard. Merchant rankings, weekday patterns, and month comparisons. |
+| **Receipt attachments** | Add/edit expense dialog → Attach receipt. Uses a persisted content URI. |
+| **Multiple accounts** | Cash, UPI, Card, and Bank are seeded on first launch; each expense records its account. |
+| **Shared expenses and splits** | People icon on the dashboard. Add split shares and mark them settled. |
+| **CI workflow and signed releases** | `.github/workflows/build-apk.yml` runs tests and builds debug/release APKs on every push. |
 
-### Next
+### Still planned
 
 | Feature | Why it matters |
 | --- | --- |
-| **Category picker with icons and colours** | Replaces free-text labels with fast, consistent categories such as Food, Travel, Bills, and Shopping. |
-| **Monthly budget with progress ring** | Turns raw totals into a simple "how much is left" signal. |
-| **Search and filter chips** | Filter by month, status, category, source, amount range, and merchant. |
-| **SMS rule tester** | Paste a sample message and see exactly how Spendora would parse it before enabling detection. |
-| **Better CSV export** | Choose columns, add a UTF-8 BOM for Excel, and export a custom date range. |
-| **Bulk select, edit, and delete** | Makes cleanup of imported or detected entries much faster. |
-| **Onboarding permission explainer** | Short, honest screens explaining SMS, notifications, overlay, and what happens if you decline. |
-
-### Soon
-
-| Feature | Why it matters |
-| --- | --- |
-| **Encrypted local backup and restore** | Moves data between phones without a cloud account. |
-| **Recurring expense detection** | Finds subscriptions and repeat payments from saved history. |
-| **Home-screen widget and quick tile** | Add an expense or check today's total without opening the app. |
-| **Spending insights** | Merchant rankings, weekday patterns, and month-over-month changes. |
-| **Receipt attachments** | Store a photo with an expense for later reimbursement. |
 | **JSON export alongside CSV** | Gives power users a lossless portable format. |
 | **Notification history screen** | Reopen missed prompts instead of digging through the shade. |
-
-### Later
-
-| Feature | Why it matters |
-| --- | --- |
-| **Multiple wallets or accounts** | Separate cash, card, and UPI spending. |
-| **Shared expenses and splits** | Track who owes whom for group trips and household bills. |
 | **Multi-currency support** | Useful for travel, with manually maintained rates to preserve offline operation. |
 | **Rule-based auto-labelling** | Learn from your edits and suggest labels for familiar merchants. |
 | **Wear OS quick entry** | Record spending from the wrist. |
 | **Optional user-owned cloud backup** | Only behind explicit opt-in and end-to-end encryption. |
-| **CI workflow and signed releases** | Automate tests, APK artefacts, and consistent release naming. |
+
+Signed release builds require `SPENDORA_KEYSTORE_FILE`, `SPENDORA_KEYSTORE_PASSWORD`, `SPENDORA_KEY_ALIAS`, and `SPENDORA_KEY_PASSWORD` to be configured as repository secrets or local environment variables. Debug builds need no signing setup.
 
 ---
 

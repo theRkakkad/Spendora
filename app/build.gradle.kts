@@ -4,6 +4,19 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+// Optional release signing: CI (or a local machine) can supply a keystore through
+// environment variables. Without them, release simply stays unsigned and debug is unchanged.
+val releaseKeystoreFile = System.getenv("SPENDORA_KEYSTORE_FILE")
+val releaseKeystorePassword = System.getenv("SPENDORA_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("SPENDORA_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("SPENDORA_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseKeystoreFile,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.spendora"
     compileSdk = 34
@@ -12,8 +25,19 @@ android {
         applicationId = "com.spendora"
         minSdk = 29
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "2.0"
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseKeystoreFile!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
@@ -22,6 +46,9 @@ android {
         }
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -62,6 +89,10 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
+
+    implementation("androidx.glance:glance-appwidget:1.1.0")
+    implementation("androidx.glance:glance-material3:1.1.0")
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-ktx:1.9.0")

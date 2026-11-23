@@ -22,7 +22,12 @@ data class Expense(
     val status: String = STATUS_PENDING,
     val isManual: Boolean = false,
     /** "ref:<upi ref>" or a hash of amount+timestamp+sender; unique, used to drop duplicate SMS. */
-    val dedupeKey: String
+    val dedupeKey: String,
+    val category: String = ExpenseCategory.OTHER.id,
+    val accountId: Long = 1L,
+    val receiptUri: String? = null,
+    val splitWith: String = "",
+    val splitSettled: Boolean = false
 ) {
     companion object {
         const val STATUS_PENDING = "PENDING"

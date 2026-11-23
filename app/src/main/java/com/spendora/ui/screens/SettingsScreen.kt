@@ -64,7 +64,8 @@ fun SettingsScreen(
     viewModel: MainViewModel,
     userName: String,
     resumeTick: Int,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenSmsTester: () -> Unit
 ) {
     val context = LocalContext.current
     val reminderMinutes by viewModel.reminderMinutes.collectAsState()
@@ -252,6 +253,10 @@ fun SettingsScreen(
                         }
                     }
                 ) { Text("Test popup") }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = onOpenSmsTester) {
+                    Text("Test an SMS rule")
+                }
             }
 
             Text(

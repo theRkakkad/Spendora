@@ -22,18 +22,24 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -62,41 +68,59 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.spendora.data.Expense
+import com.spendora.export.CsvExporter
+import com.spendora.ui.AppDestination
 import com.spendora.ui.MainViewModel
 import com.spendora.util.Format
 import com.spendora.util.SetupChecks
 import kotlinx.coroutines.launch
+
+private data class ExportSettings(
+    val options: CsvExporter.CsvOptions = CsvExporter.CsvOptions(),
+    val allTime: Boolean = false,
+    val startDate: String? = null,
+    val endDate: String? = null
+)
 
 @Composable
 fun DashboardScreen(
     viewModel: MainViewModel,
     userName: String,
     resumeTick: Int,
-    onOpenSettings: () -> Unit
+    onNavigate: (AppDestination) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by viewModel.dashboard.collectAsState()
     val search by viewModel.search.collectAsState()
     val labels by viewModel.recentLabels.collectAsState()
+    val filters by viewModel.filters.collectAsState()
+    val selection by viewModel.selection.collectAsState()
 
     var showAdd by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Expense?>(null) }
     var deleting by remember { mutableStateOf<Expense?>(null) }
     var showExport by remember { mutableStateOf(false) }
-    // Which range the file picker was opened for: 0 = none, 1 = this month, 2 = all time.
-    var saveRange by rememberSaveable { mutableStateOf(0) }
+    // Which range the file picker was opened for: 0 = none, 1 = custom export.
+    var saveExport by rememberSaveable { mutableStateOf(false) }
+    var exportSettings by remember { mutableStateOf(ExportSettings()) }
 
     val setup = remember(resumeTick) { SetupChecks.read(context) }
 
     val saveLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/csv")
     ) { uri: Uri? ->
-        val range = saveRange
-        saveRange = 0
-        if (uri != null && range != 0) {
+        val shouldWrite = saveExport
+        saveExport = false
+        if (uri != null && shouldWrite) {
             scope.launch {
-                val ok = viewModel.writeCsv(uri, allTime = range == 2)
+                val ok = viewModel.writeCsv(
+                    uri = uri,
+                    options = exportSettings.options,
+                    allTime = exportSettings.allTime,
+                    startDate = exportSettings.startDate,
+                    endDate = exportSettings.endDate
+                )
                 Toast.makeText(
                     context,
                     if (ok) "CSV saved" else "Could not save the CSV",
@@ -117,7 +141,19 @@ fun DashboardScreen(
                     )
                 },
                 actions = {
-                    IconButton(onClick = onOpenSettings) {
+                    IconButton(onClick = { onNavigate(AppDestination.INSIGHTS) }) {
+                        Icon(Icons.Filled.BarChart, contentDescription = "Spending insights")
+                    }
+                    IconButton(onClick = { onNavigate(AppDestination.BUDGET) }) {
+                        Icon(Icons.Filled.AccountBalanceWallet, contentDescription = "Monthly budget")
+                    }
+                    IconButton(onClick = { onNavigate(AppDestination.SPLITS) }) {
+                        Icon(Icons.Filled.Group, contentDescription = "Split expenses")
+                    }
+                    IconButton(onClick = { onNavigate(AppDestination.BACKUP) }) {
+                        Icon(Icons.Filled.Backup, contentDescription = "Backup and restore")
+                    }
+                    IconButton(onClick = { onNavigate(AppDestination.SETTINGS) }) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings and setup")
                     }
                 }
@@ -160,7 +196,7 @@ fun DashboardScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.weight(1f)
                             )
-                            TextButton(onClick = onOpenSettings) { Text("Fix") }
+                            TextButton(onClick = { onNavigate(AppDestination.SETTINGS) }) { Text("Fix") }
                         }
                     }
                 }
@@ -178,6 +214,17 @@ fun DashboardScreen(
                 )
             }
 
+            item(key = "bulk") {
+                BulkBar(
+                    selectedCount = selection.size,
+                    accounts = state.accounts,
+                    onClear = { viewModel.clearSelection() },
+                    onDelete = { viewModel.bulkDelete() },
+                    onSetCategory = { viewModel.bulkSetCategory(it) },
+                    onSetAccount = { viewModel.bulkSetAccount(it) }
+                )
+            }
+
             if (state.pending.isNotEmpty()) {
                 item(key = "pending-header") {
                     Text(
@@ -189,10 +236,28 @@ fun DashboardScreen(
                 items(state.pending, key = { "pending-${it.id}" }) { expense ->
                     PendingCard(
                         expense = expense,
+                        selected = expense.id in selection,
+                        onToggleSelection = { viewModel.toggleSelection(expense.id) },
                         onAddDetails = { editing = expense },
                         onDelete = { deleting = expense }
                     )
                 }
+            }
+
+            item(key = "filters") {
+                FilterBar(
+                    category = filters.category,
+                    source = filters.source,
+                    status = filters.status,
+                    minAmount = filters.minAmount,
+                    maxAmount = filters.maxAmount,
+                    onCategory = { viewModel.setCategoryFilter(it) },
+                    onSource = { viewModel.setSourceFilter(it) },
+                    onStatus = { viewModel.setStatusFilter(it) },
+                    onMinAmount = { viewModel.setMinAmountFilter(it) },
+                    onMaxAmount = { viewModel.setMaxAmountFilter(it) },
+                    onClear = { viewModel.clearFilters() }
+                )
             }
 
             item(key = "search") {
@@ -200,7 +265,7 @@ fun DashboardScreen(
                     value = search,
                     onValueChange = { viewModel.setSearch(it) },
                     singleLine = true,
-                    placeholder = { Text("Search by paid to / type") },
+                    placeholder = { Text("Search by paid to / type / category") },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     trailingIcon = {
                         if (search.isNotEmpty()) {
@@ -210,9 +275,7 @@ fun DashboardScreen(
                         }
                     },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp)
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
 
@@ -220,7 +283,7 @@ fun DashboardScreen(
                 item(key = "empty") {
                     Text(
                         text = when {
-                            state.hasAnySavedInMonth -> "No expenses match \"${search.trim()}\"."
+                            state.hasAnySavedInMonth -> "No expenses match the current filters."
                             else -> "No expenses saved in ${Format.month(state.month)}."
                         },
                         style = MaterialTheme.typography.bodyMedium,
@@ -232,6 +295,8 @@ fun DashboardScreen(
                 items(state.saved, key = { "saved-${it.id}" }) { expense ->
                     SavedRow(
                         expense = expense,
+                        selected = expense.id in selection,
+                        onToggleSelection = { viewModel.toggleSelection(expense.id) },
                         onEdit = { editing = expense },
                         onDelete = { deleting = expense }
                     )
@@ -247,9 +312,10 @@ fun DashboardScreen(
             initialLabel = "",
             initialTimestamp = remember { System.currentTimeMillis() },
             suggestions = labels,
+            accounts = state.accounts,
             onDismiss = { showAdd = false },
-            onSave = { amount, label, timestamp ->
-                viewModel.addManual(amount, label, timestamp)
+            onSave = { amount, label, timestamp, category, accountId, receiptUri ->
+                viewModel.addManual(amount, label, timestamp, category, accountId, receiptUri)
                 showAdd = false
             }
         )
@@ -262,10 +328,14 @@ fun DashboardScreen(
             initialAmount = toEdit.amount,
             initialLabel = toEdit.label,
             initialTimestamp = toEdit.timestamp,
+            initialCategory = toEdit.category,
+            initialAccountId = toEdit.accountId,
+            initialReceiptUri = toEdit.receiptUri,
             suggestions = labels,
+            accounts = state.accounts,
             onDismiss = { editing = null },
-            onSave = { amount, label, timestamp ->
-                viewModel.saveExpense(toEdit, amount, label, timestamp)
+            onSave = { amount, label, timestamp, category, accountId, receiptUri ->
+                viewModel.saveExpense(toEdit, amount, label, timestamp, category, accountId, receiptUri)
                 editing = null
             }
         )
@@ -287,24 +357,27 @@ fun DashboardScreen(
     if (showExport) {
         ExportDialog(
             monthLabel = Format.month(state.month),
+            settings = exportSettings,
+            onSettingsChange = { exportSettings = it },
             onDismiss = { showExport = false },
-            onSaveToFile = { allTime ->
+            onSaveToFile = { settings ->
                 showExport = false
                 scope.launch {
-                    val file = viewModel.buildCsv(allTime)
-                    saveRange = if (allTime) 2 else 1
+                    val file = viewModel.buildCsv(settings.options, settings.allTime, settings.startDate, settings.endDate)
+                    exportSettings = settings
+                    saveExport = true
                     try {
                         saveLauncher.launch(file.fileName)
                     } catch (e: Exception) {
-                        saveRange = 0
+                        saveExport = false
                         Toast.makeText(context, "No file picker available", Toast.LENGTH_SHORT).show()
                     }
                 }
             },
-            onShare = { allTime ->
+            onShare = { settings ->
                 showExport = false
                 scope.launch {
-                    val uri = viewModel.csvShareUri(allTime)
+                    val uri = viewModel.csvShareUri(settings.options, settings.allTime, settings.startDate, settings.endDate)
                     if (uri == null) {
                         Toast.makeText(context, "Could not create the CSV", Toast.LENGTH_SHORT).show()
                     } else {
@@ -371,15 +444,9 @@ private fun TotalsCard(
                     style = MaterialTheme.typography.displaySmall,
                     fontWeight = FontWeight.SemiBold
                 )
-                Text(
-                    text = "spent this month",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Text(text = "spent this month", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    text = "Today: " + Format.money(todayTotal),
-                    style = MaterialTheme.typography.titleMedium
-                )
+                Text(text = "Today: " + Format.money(todayTotal), style = MaterialTheme.typography.titleMedium)
                 if (pendingTotal > 0.0) {
                     Spacer(Modifier.height(2.dp))
                     Text(
@@ -397,6 +464,8 @@ private fun TotalsCard(
 @Composable
 private fun PendingCard(
     expense: Expense,
+    selected: Boolean,
+    onToggleSelection: () -> Unit,
     onAddDetails: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -408,9 +477,11 @@ private fun PendingCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 4.dp, bottom = 12.dp),
+            modifier = Modifier.padding(start = 8.dp, top = 12.dp, end = 4.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Checkbox(checked = selected, onCheckedChange = { onToggleSelection() })
+            Spacer(Modifier.width(4.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = Format.money(expense.amount),
@@ -427,7 +498,6 @@ private fun PendingCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Spacer(Modifier.width(8.dp))
             Button(onClick = onAddDetails) { Text("Add details") }
             IconButton(onClick = onDelete) {
                 Icon(Icons.Filled.Delete, contentDescription = "Delete pending payment")
@@ -439,14 +509,18 @@ private fun PendingCard(
 @Composable
 private fun SavedRow(
     expense: Expense,
+    selected: Boolean,
+    onToggleSelection: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.padding(start = 16.dp, top = 10.dp, end = 4.dp, bottom = 10.dp),
+            modifier = Modifier.padding(start = 8.dp, top = 10.dp, end = 4.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Checkbox(checked = selected, onCheckedChange = { onToggleSelection() })
+            Spacer(Modifier.width(4.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = expense.label.ifBlank { "(no label)" },
@@ -456,12 +530,11 @@ private fun SavedRow(
                 )
                 Text(
                     text = Format.dateTime(expense.timestamp) + " • " +
-                        (if (expense.isManual) "Manual" else "SMS"),
+                        (if (expense.isManual) "Manual" else "SMS") + " • " + expense.category,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(Modifier.width(8.dp))
             Text(
                 text = Format.money(expense.amount),
                 style = MaterialTheme.typography.titleMedium,
@@ -480,45 +553,105 @@ private fun SavedRow(
 @Composable
 private fun ExportDialog(
     monthLabel: String,
+    settings: ExportSettings,
+    onSettingsChange: (ExportSettings) -> Unit,
     onDismiss: () -> Unit,
-    onSaveToFile: (allTime: Boolean) -> Unit,
-    onShare: (allTime: Boolean) -> Unit
+    onSaveToFile: (ExportSettings) -> Unit,
+    onShare: (ExportSettings) -> Unit
 ) {
-    var allTime by remember { mutableStateOf(false) }
+    var allTime by remember { mutableStateOf(settings.allTime) }
+    var startDate by remember { mutableStateOf(settings.startDate ?: "") }
+    var endDate by remember { mutableStateOf(settings.endDate ?: "") }
+    val options = settings.options
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Export CSV") },
         text = {
-            Column {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .selectable(selected = !allTime, onClick = { allTime = false }),
+                    modifier = Modifier.fillMaxWidth().selectable(selected = !allTime, onClick = { allTime = false }),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     RadioButton(selected = !allTime, onClick = { allTime = false })
-                    Text("This month ($monthLabel)")
+                    Text("Selected range ($monthLabel / custom dates)")
                 }
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .selectable(selected = allTime, onClick = { allTime = true }),
+                    modifier = Modifier.fillMaxWidth().selectable(selected = allTime, onClick = { allTime = true }),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     RadioButton(selected = allTime, onClick = { allTime = true })
                     Text("All time")
                 }
-                Spacer(Modifier.height(16.dp))
+                if (!allTime) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = startDate,
+                        onValueChange = { startDate = it },
+                        label = { Text("From (yyyy-MM-dd)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = endDate,
+                        onValueChange = { endDate = it },
+                        label = { Text("To (yyyy-MM-dd)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Columns", style = MaterialTheme.typography.labelLarge)
+                CsvToggle("Date", options.date) { onSettingsChange(settings.copy(options = options.copy(date = it))) }
+                CsvToggle("Time", options.time) { onSettingsChange(settings.copy(options = options.copy(time = it))) }
+                CsvToggle("Amount", options.amount) { onSettingsChange(settings.copy(options = options.copy(amount = it))) }
+                CsvToggle("Category", options.category) { onSettingsChange(settings.copy(options = options.copy(category = it))) }
+                CsvToggle("Account", options.account) { onSettingsChange(settings.copy(options = options.copy(account = it))) }
+                CsvToggle("Label", options.label) { onSettingsChange(settings.copy(options = options.copy(label = it))) }
+                CsvToggle("Reference", options.reference) { onSettingsChange(settings.copy(options = options.copy(reference = it))) }
+                CsvToggle("Source", options.source) { onSettingsChange(settings.copy(options = options.copy(source = it))) }
+                CsvToggle("Receipt URI", options.receipt) { onSettingsChange(settings.copy(options = options.copy(receipt = it))) }
+                CsvToggle("Include total row", options.total) { onSettingsChange(settings.copy(options = options.copy(total = it))) }
+                CsvToggle("Excel BOM", options.bom) { onSettingsChange(settings.copy(options = options.copy(bom = it))) }
+                Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { onSaveToFile(allTime) }) { Text("Save to file") }
-                    OutlinedButton(onClick = { onShare(allTime) }) { Text("Share") }
+                    Button(
+                        onClick = {
+                            onSaveToFile(
+                                settings.copy(
+                                    allTime = allTime,
+                                    startDate = startDate.ifBlank { null },
+                                    endDate = endDate.ifBlank { null }
+                                )
+                            )
+                        }
+                    ) { Text("Save to file") }
+                    OutlinedButton(
+                        onClick = {
+                            onShare(
+                                settings.copy(
+                                    allTime = allTime,
+                                    startDate = startDate.ifBlank { null },
+                                    endDate = endDate.ifBlank { null }
+                                )
+                            )
+                        }
+                    ) { Text("Share") }
                 }
             }
         },
         confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
+}
+
+@Composable
+private fun CsvToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(checked = checked, onCheckedChange = onChange)
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+    }
 }

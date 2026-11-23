@@ -5,13 +5,22 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.spendora.SpendoraApp
+import com.spendora.backup.BackupManager
+import com.spendora.data.Account
+import com.spendora.data.Budget
 import com.spendora.data.Expense
+import com.spendora.data.ExpenseCategory
+import com.spendora.data.SplitShare
 import com.spendora.data.SettingsStore
 import com.spendora.export.CsvExporter
 import com.spendora.notify.NotificationHelper
 import com.spendora.notify.ReminderScheduler
 import com.spendora.sms.SmsProcessor
 import com.spendora.util.Format
+import com.spendora.util.Insights
+import com.spendora.util.InsightsEngine
+import com.spendora.util.SmsRuleTester
+import com.spendora.util.SmsTestResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,10 +28,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -30,14 +41,25 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.random.Random
 
+data class DashboardFilters(
+    val category: String = "ALL",
+    val source: String = "ALL",
+    val status: String = "ALL",
+    val minAmount: String = "",
+    val maxAmount: String = ""
+)
+
 data class DashboardState(
     val month: YearMonth,
     val pending: List<Expense> = emptyList(),
     val saved: List<Expense> = emptyList(),
+    val monthSaved: List<Expense> = emptyList(),
     val monthTotal: Double = 0.0,
     val todayTotal: Double = 0.0,
     val pendingTotal: Double = 0.0,
-    val hasAnySavedInMonth: Boolean = false
+    val hasAnySavedInMonth: Boolean = false,
+    val accounts: List<Account> = emptyList(),
+    val budgetLimit: Double = 0.0
 )
 
 class CsvFile(val fileName: String, val content: String)
@@ -47,6 +69,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as SpendoraApp
     private val repository = app.repository
     private val settings = app.settings
+    private val backupManager = BackupManager(app, repository, settings)
 
     // ---- Profile -------------------------------------------------------------------------
 
@@ -68,59 +91,158 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _search = MutableStateFlow("")
     val search: StateFlow<String> = _search.asStateFlow()
 
-    val dashboard: StateFlow<DashboardState> =
-        combine(repository.observeAll(), selectedMonth, _search) { all, month, query ->
-            buildDashboard(all, month, query)
-        }.stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5_000),
-            DashboardState(month = YearMonth.now())
+    private val _filters = MutableStateFlow(DashboardFilters())
+    val filters: StateFlow<DashboardFilters> = _filters.asStateFlow()
+
+    val accounts: StateFlow<List<Account>> = repository.observeAccounts()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val dashboardBase: StateFlow<DashboardState> = combine(
+        repository.observeAll(),
+        repository.observeAccounts(),
+        repository.observeBudgets(),
+        selectedMonth,
+        _filters
+    ) { all, accountList, budgets, month, filter ->
+
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        val todayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
+        val todayEnd = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+
+        val pending = all.filter { it.status == Expense.STATUS_PENDING }
+        val saved = all.filter { it.status == Expense.STATUS_SAVED }
+        val savedInMonth = saved.filter { it.timestamp in Format.monthStartMillis(month) until Format.monthEndMillis(month) }
+        val min = filter.minAmount.toDoubleOrNull()
+        val max = filter.maxAmount.toDoubleOrNull()
+
+        val visible = savedInMonth.filter { expense ->
+            val matchesCategory = filter.category == "ALL" || expense.category == filter.category
+            val matchesSource = filter.source == "ALL" ||
+                (filter.source == "MANUAL" && expense.isManual) ||
+                (filter.source == "SMS" && !expense.isManual)
+            val matchesStatus = filter.status == "ALL" || expense.status == filter.status
+            val matchesMin = min == null || expense.amount >= min
+            val matchesMax = max == null || expense.amount <= max
+            matchesCategory && matchesSource && matchesStatus && matchesMin && matchesMax
+        }
+
+        DashboardState(
+            month = month,
+            pending = pending,
+            saved = visible,
+            monthSaved = savedInMonth,
+            monthTotal = savedInMonth.sumOf { it.amount },
+            todayTotal = saved.filter { it.timestamp in todayStart until todayEnd }.sumOf { it.amount },
+            pendingTotal = pending.sumOf { it.amount },
+            hasAnySavedInMonth = savedInMonth.isNotEmpty(),
+            accounts = accountList,
+            budgetLimit = budgets.firstOrNull { it.month == month.toString() }?.limit ?: 0.0
         )
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        DashboardState(month = YearMonth.now())
+    )
+
+    val dashboard: StateFlow<DashboardState> = combine(dashboardBase, _search) { state, query ->
+        val q = query.trim()
+        if (q.isEmpty()) {
+            state
+        } else {
+            state.copy(
+                saved = state.saved.filter { expense ->
+                    expense.label.contains(q, ignoreCase = true) ||
+                        expense.sender.contains(q, ignoreCase = true) ||
+                        expense.category.contains(q, ignoreCase = true)
+                }
+            )
+        }
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        DashboardState(month = YearMonth.now())
+    )
 
     val recentLabels: StateFlow<List<String>> = repository.observeRecentLabels()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private fun buildDashboard(all: List<Expense>, month: YearMonth, query: String): DashboardState {
-        val monthStart = Format.monthStartMillis(month)
-        val monthEnd = Format.monthEndMillis(month)
-        val zone = ZoneId.systemDefault()
-        val todayStart = LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli()
-        val todayEnd = LocalDate.now(zone).plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    val allExpenses: StateFlow<List<Expense>> = repository.observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-        val pending = all.filter { it.status == Expense.STATUS_PENDING }
-        val saved = all.filter { it.status == Expense.STATUS_SAVED }
-        val savedInMonth = saved.filter { it.timestamp in monthStart until monthEnd }
-        val q = query.trim()
-        val visible = if (q.isEmpty()) savedInMonth else savedInMonth.filter { it.label.contains(q, ignoreCase = true) }
+    val insights: StateFlow<Insights> = allExpenses
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        .let { expenses ->
+            combine(expenses, _search) { all, _ ->
+                InsightsEngine.build(all.filter { it.status == Expense.STATUS_SAVED })
+            }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), InsightsEngine.build(emptyList()))
+        }
 
-        return DashboardState(
-            month = month,
-            pending = pending,
-            saved = visible,
-            monthTotal = savedInMonth.sumOf { it.amount },
-            todayTotal = saved.filter { it.timestamp in todayStart until todayEnd }.sumOf { it.amount },
-            pendingTotal = pending.sumOf { it.amount },
-            hasAnySavedInMonth = savedInMonth.isNotEmpty()
-        )
+    val shares: StateFlow<List<SplitShare>> = repository.observeShares()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _selection = MutableStateFlow<Set<Long>>(emptySet())
+    val selection: StateFlow<Set<Long>> = _selection.asStateFlow()
+
+    fun previousMonth() { selectedMonth.value = selectedMonth.value.minusMonths(1) }
+    fun nextMonth() { selectedMonth.value = selectedMonth.value.plusMonths(1) }
+    fun currentMonth() { selectedMonth.value = YearMonth.now() }
+    fun setSearch(query: String) { _search.value = query }
+
+    fun setCategoryFilter(value: String) { _filters.value = _filters.value.copy(category = value) }
+    fun setSourceFilter(value: String) { _filters.value = _filters.value.copy(source = value) }
+    fun setStatusFilter(value: String) { _filters.value = _filters.value.copy(status = value) }
+    fun setMinAmountFilter(value: String) { _filters.value = _filters.value.copy(minAmount = value) }
+    fun setMaxAmountFilter(value: String) { _filters.value = _filters.value.copy(maxAmount = value) }
+    fun clearFilters() { _filters.value = DashboardFilters() }
+
+    fun toggleSelection(id: Long) {
+        _selection.value = if (_selection.value.contains(id)) _selection.value - id else _selection.value + id
     }
 
-    fun previousMonth() {
-        selectedMonth.value = selectedMonth.value.minusMonths(1)
+    fun clearSelection() { _selection.value = emptySet() }
+
+    fun bulkDelete() {
+        val ids = _selection.value.toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            repository.deleteByIds(ids)
+            ids.forEach { NotificationHelper.cancel(app, it) }
+            NotificationHelper.updateSummary(app)
+            clearSelection()
+        }
     }
 
-    fun nextMonth() {
-        selectedMonth.value = selectedMonth.value.plusMonths(1)
+    fun bulkSetCategory(categoryId: String) {
+        val ids = _selection.value
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            val all = repository.observeAll().first()
+            repository.updateAll(all.filter { it.id in ids }.map { it.copy(category = categoryId) })
+            clearSelection()
+        }
     }
 
-    fun currentMonth() {
-        selectedMonth.value = YearMonth.now()
+    fun bulkSetAccount(accountId: Long) {
+        val ids = _selection.value
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            val all = repository.observeAll().first()
+            repository.updateAll(all.filter { it.id in ids }.map { it.copy(accountId = accountId) })
+            clearSelection()
+        }
     }
 
-    fun setSearch(query: String) {
-        _search.value = query
-    }
+    // ---- Expenses ------------------------------------------------------------------------
 
-    fun addManual(amount: Double, label: String, timestamp: Long) {
+    fun addManual(
+        amount: Double,
+        label: String,
+        timestamp: Long,
+        category: String = ExpenseCategory.OTHER.id,
+        accountId: Long = 1L,
+        receiptUri: String? = null
+    ) {
         viewModelScope.launch {
             repository.insert(
                 Expense(
@@ -132,21 +254,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     userName = userName.value ?: "",
                     status = Expense.STATUS_SAVED,
                     isManual = true,
-                    dedupeKey = "manual:" + UUID.randomUUID().toString()
+                    dedupeKey = "manual:" + UUID.randomUUID().toString(),
+                    category = category,
+                    accountId = accountId,
+                    receiptUri = receiptUri
                 )
             )
         }
     }
 
     /** Saves edits; a PENDING expense becomes SAVED and its notification goes away. */
-    fun saveExpense(expense: Expense, amount: Double, label: String, timestamp: Long) {
+    fun saveExpense(
+        expense: Expense,
+        amount: Double,
+        label: String,
+        timestamp: Long,
+        category: String = expense.category,
+        accountId: Long = expense.accountId,
+        receiptUri: String? = expense.receiptUri
+    ) {
         viewModelScope.launch {
             repository.update(
                 expense.copy(
                     amount = amount,
                     label = label.trim(),
                     timestamp = timestamp,
-                    status = Expense.STATUS_SAVED
+                    status = Expense.STATUS_SAVED,
+                    category = category,
+                    accountId = accountId,
+                    receiptUri = receiptUri
                 )
             )
             NotificationHelper.cancel(app, expense.id)
@@ -162,6 +298,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ---- Budgets -------------------------------------------------------------------------
+
+    fun setBudget(month: YearMonth, limit: Double) {
+        viewModelScope.launch { repository.upsertBudget(Budget(month = month.toString(), limit = limit)) }
+    }
+
+    // ---- Splits --------------------------------------------------------------------------
+
+    fun addShare(expenseId: Long, person: String, amount: Double) {
+        if (person.isBlank() || amount <= 0.0) return
+        viewModelScope.launch {
+            repository.insertShare(SplitShare(expenseId = expenseId, person = person.trim(), amount = amount))
+        }
+    }
+
+    fun toggleShare(share: SplitShare) {
+        viewModelScope.launch { repository.updateShare(share.copy(settled = !share.settled)) }
+    }
+
+    // ---- SMS rule tester -----------------------------------------------------------------
+
+    private val _smsTestResult = MutableStateFlow<SmsTestResult?>(null)
+    val smsTestResult: StateFlow<SmsTestResult?> = _smsTestResult.asStateFlow()
+
+    fun testSmsRule(sender: String, body: String) {
+        viewModelScope.launch {
+            val snapshot = settings.snapshot()
+            _smsTestResult.value = SmsRuleTester.test(sender, body, snapshot.senders, snapshot.keywords)
+        }
+    }
+
     /** Called whenever the app comes to the foreground. */
     fun onAppResumed() {
         viewModelScope.launch {
@@ -172,28 +339,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---- CSV export ----------------------------------------------------------------------
 
-    suspend fun buildCsv(allTime: Boolean): CsvFile = withContext(Dispatchers.IO) {
+    suspend fun buildCsv(allTime: Boolean): CsvFile = buildCsv(CsvExporter.CsvOptions(), allTime, null, null)
+
+    suspend fun buildCsv(
+        options: CsvExporter.CsvOptions,
+        allTime: Boolean,
+        startDate: String?,
+        endDate: String?
+    ): CsvFile = withContext(Dispatchers.IO) {
         val month = selectedMonth.value
-        val rows = if (allTime) {
-            repository.getAllSaved()
-        } else {
-            repository.getSavedBetween(Format.monthStartMillis(month), Format.monthEndMillis(month))
+        val zone = ZoneId.systemDefault()
+        val rows = when {
+            allTime -> repository.getAllSaved()
+            startDate != null || endDate != null -> {
+                val start = parseDay(startDate)?.atStartOfDay(zone)?.toInstant()?.toEpochMilli()
+                    ?: Format.monthStartMillis(month)
+                val end = parseDay(endDate)?.plusDays(1)?.atStartOfDay(zone)?.toInstant()?.toEpochMilli()
+                    ?: Format.monthEndMillis(month)
+                repository.getSavedBetween(start, end)
+            }
+            else -> repository.getSavedBetween(Format.monthStartMillis(month), Format.monthEndMillis(month))
         }
         val name = if (allTime) {
             "spendora-all-time.csv"
         } else {
             "spendora-" + DateTimeFormatter.ofPattern("yyyy-MM", Locale.ENGLISH).format(month) + ".csv"
         }
-        CsvFile(name, CsvExporter.build(rows))
+        val accountsById = repository.observeAccounts().first().associateBy { it.id }
+        CsvFile(name, CsvExporter.build(rows, options, accountsById))
     }
 
-    suspend fun writeCsv(uri: Uri, allTime: Boolean): Boolean = withContext(Dispatchers.IO) {
-        CsvExporter.writeToUri(app, uri, buildCsv(allTime).content)
+    private fun parseDay(value: String?): LocalDate? {
+        if (value.isNullOrBlank()) return null
+        return runCatching {
+            LocalDate.parse(value.trim(), DateTimeFormatter.ISO_LOCAL_DATE)
+        }.getOrNull()
     }
 
-    suspend fun csvShareUri(allTime: Boolean): Uri? = withContext(Dispatchers.IO) {
+    suspend fun writeCsv(uri: Uri, allTime: Boolean): Boolean =
+        writeCsv(uri, CsvExporter.CsvOptions(), allTime, null, null)
+
+    suspend fun writeCsv(
+        uri: Uri,
+        options: CsvExporter.CsvOptions,
+        allTime: Boolean,
+        startDate: String?,
+        endDate: String?
+    ): Boolean = withContext(Dispatchers.IO) {
+        CsvExporter.writeToUri(app, uri, buildCsv(options, allTime, startDate, endDate).content)
+    }
+
+    suspend fun csvShareUri(allTime: Boolean): Uri? = csvShareUri(CsvExporter.CsvOptions(), allTime, null, null)
+
+    suspend fun csvShareUri(
+        options: CsvExporter.CsvOptions,
+        allTime: Boolean,
+        startDate: String?,
+        endDate: String?
+    ): Uri? = withContext(Dispatchers.IO) {
         try {
-            val file = buildCsv(allTime)
+            val file = buildCsv(options, allTime, startDate, endDate)
             CsvExporter.writeToCache(app, file.fileName, file.content)
         } catch (e: Exception) {
             null
@@ -246,6 +451,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 SmsProcessor.process(app, "VM-HDFCBK", body, now)
             }
             onResult(outcome)
+        }
+    }
+
+    // ---- Encrypted backup ----------------------------------------------------------------
+
+    private val _backupResult = MutableStateFlow<String?>(null)
+    val backupResult: StateFlow<String?> = _backupResult.asStateFlow()
+
+    fun exportBackup(uri: Uri, passphrase: String) {
+        viewModelScope.launch {
+            _backupResult.value = if (backupManager.export(uri, passphrase)) {
+                "Encrypted backup saved"
+            } else {
+                "Backup failed: ${backupManager.lastError() ?: "unknown error"}"
+            }
+        }
+    }
+
+    fun importBackup(uri: Uri, passphrase: String) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { backupManager.import(uri, passphrase) }
+            _backupResult.value = if (result.expenses > 0 || result.accounts > 0 || result.budgets > 0 || result.shares > 0) {
+                "Restored ${result.expenses} expenses, ${result.accounts} accounts, " +
+                    "${result.budgets} budgets and ${result.shares} splits"
+            } else {
+                "Import failed: ${backupManager.lastError() ?: "no data restored"}"
+            }
         }
     }
 }
