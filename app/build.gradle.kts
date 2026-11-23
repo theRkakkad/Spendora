@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.expensetracker.app"
+    namespace = "com.spendora.app"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.expensetracker.app"
+        applicationId = "com.spendora.app"
         minSdk = 29
         targetSdk = 34
         versionCode = 3

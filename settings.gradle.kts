@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ExpenseTracker"
+rootProject.name = "Spendora"
 include(":app")
